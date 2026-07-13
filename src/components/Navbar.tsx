@@ -1,11 +1,37 @@
 "use client";
 
 import Link from "next/link";
-import { useState } from "react";
+import { useRouter } from "next/navigation";
+import { useEffect, useState } from "react";
+import type { User } from "@supabase/supabase-js";
+import { createClient } from "@/lib/supabase/client";
 
 export default function Navbar() {
+  const router = useRouter();
+  const supabase = createClient();
+
   const [aboutOpen, setAboutOpen] = useState(false);
   const [accountOpen, setAccountOpen] = useState(false);
+  const [user, setUser] = useState<User | null>(null);
+
+  useEffect(() => {
+    supabase.auth.getUser().then(({ data }) => setUser(data.user));
+
+    const {
+      data: { subscription },
+    } = supabase.auth.onAuthStateChange((_event, session) => {
+      setUser(session?.user ?? null);
+    });
+
+    return () => subscription.unsubscribe();
+  }, [supabase]);
+
+  async function handleLogout() {
+    await supabase.auth.signOut();
+    setAccountOpen(false);
+    router.push("/");
+    router.refresh();
+  }
 
   return (
     <nav className="sticky top-0 z-50 border-b border-storm-700 bg-storm-950/90 backdrop-blur">
@@ -62,9 +88,18 @@ export default function Navbar() {
                 <Link href="/account/rate" className="block rounded px-3 py-2 hover:bg-storm-800">
                   Rate
                 </Link>
-                <Link href="/login" className="block rounded px-3 py-2 hover:bg-storm-800">
-                  Login / Logout
-                </Link>
+                {user ? (
+                  <button
+                    onClick={handleLogout}
+                    className="block w-full rounded px-3 py-2 text-left hover:bg-storm-800"
+                  >
+                    Logout
+                  </button>
+                ) : (
+                  <Link href="/login" className="block rounded px-3 py-2 hover:bg-storm-800">
+                    Login
+                  </Link>
+                )}
               </div>
             )}
           </div>
