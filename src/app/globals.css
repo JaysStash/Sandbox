@@ -1,0 +1,18 @@
+@import "tailwindcss";
+
+@theme {
+  --color-storm-950: #05070d;
+  --color-storm-900: #0b0f1a;
+  --color-storm-800: #141a2b;
+  --color-storm-700: #1e2740;
+  --color-storm-600: #2c3a5c;
+  --color-bolt-400: #ffd94d;
+  --color-bolt-500: #f5c518;
+  --color-radar-green: #39ff6a;
+  --color-radar-red: #ff3b3b;
+}
+
+body {
+  background-color: var(--color-storm-950);
+  color: #e8ecf5;
+}
