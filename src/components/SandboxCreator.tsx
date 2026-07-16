@@ -110,7 +110,7 @@ export default function SandboxCreator({
   }
 
   return (
-    <div className="mx-auto max-w-2xl px-4 pb-40 pt-8">
+    <div className="mx-auto max-w-2xl px-4 pb-44 pt-8">
       <h1 className="text-2xl font-bold text-bolt-500">
         Tornado Parameters
       </h1>
@@ -143,30 +143,16 @@ export default function SandboxCreator({
         ))}
       </div>
 
-      {saveResult && !saveResult.success && (
-        <div className="mt-6 rounded-lg border border-radar-red/40 bg-storm-900 p-4 text-sm text-radar-red">
-          {saveResult.message}
-          {saveResult.message.toLowerCase().includes("log in") && (
-            <>
-              {" "}
-              <Link href="/login" className="underline">
-                Log in
-              </Link>
-            </>
-          )}
-        </div>
-      )}
-
-      <button
-        onClick={handleSave}
-        disabled={saving}
-        className="mt-6 w-full rounded-lg bg-bolt-500 py-3 font-semibold text-storm-950 hover:bg-bolt-400 disabled:opacity-50"
+      <div
+        className="fixed inset-x-0 bottom-0 z-40 mx-auto max-w-2xl px-4"
+        style={{ paddingBottom: "env(safe-area-inset-bottom)" }}
       >
-        {saving ? "Saving..." : "Save Storm"}
-      </button>
-
-      <div className="fixed inset-x-0 bottom-0 z-40 mx-auto max-w-2xl px-4">
-        <OutlookBox outlook={outlook} />
+        <OutlookBox
+          outlook={outlook}
+          onSave={handleSave}
+          saving={saving}
+          saveMessage={saveResult}
+        />
       </div>
     </div>
   );
