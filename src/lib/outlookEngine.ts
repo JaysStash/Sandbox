@@ -47,6 +47,7 @@ export type OutlookResult = {
   categoryColor: string;
   headline: string;
   explanation: string;
+  supercellLikely: boolean;
   diagnostics: {
     stp: number;
     scp: number;
@@ -196,6 +197,7 @@ export function calculateTornadoOutlook(
     categoryColor: meta.color,
     headline,
     explanation,
+    supercellLikely,
     diagnostics: { stp, scp, ehi1, ehi3, brn },
   };
 }

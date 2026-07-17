@@ -78,9 +78,12 @@ export default function Navbar() {
               Account
             </button>
             {accountOpen && (
-              <div className="absolute right-0 mt-2 w-40 rounded-lg border border-storm-700 bg-storm-900 p-2 shadow-xl">
+              <div className="absolute right-0 mt-2 w-44 rounded-lg border border-storm-700 bg-storm-900 p-2 shadow-xl">
                 <Link href="/account/profile" className="block rounded px-3 py-2 hover:bg-storm-800">
                   Profile
+                </Link>
+                <Link href="/sandbox/storms" className="block rounded px-3 py-2 hover:bg-storm-800">
+                  My Storms
                 </Link>
                 <Link href="/account/refer" className="block rounded px-3 py-2 hover:bg-storm-800">
                   Refer

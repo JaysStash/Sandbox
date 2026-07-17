@@ -58,6 +58,7 @@ export default function SandboxCreator({
   const [saveResult, setSaveResult] = useState<{
     success: boolean;
     message: string;
+    stormId?: string;
   } | null>(null);
 
   const outlook = useMemo(() => {
@@ -94,17 +95,23 @@ export default function SandboxCreator({
         />
         <h1 className="text-2xl font-bold text-bolt-500">Storm Saved!</h1>
         <p className="mt-3 text-gray-300">{outlook.headline}</p>
-        <p className="mt-4 text-sm text-gray-500">
-          Animated radar playback and damage statistics are coming with the
-          Map &amp; Radar phase — your full parameter set and outlook are
-          already saved to your account.
-        </p>
-        <Link
-          href="/sandbox"
-          className="mt-6 inline-block rounded-lg bg-bolt-500 px-4 py-2 font-semibold text-storm-950 hover:bg-bolt-400"
-        >
-          Create Another Storm
-        </Link>
+
+        <div className="mt-6 flex flex-col gap-3">
+          {saveResult.stormId && (
+            <Link
+              href={`/sandbox/radar/${saveResult.stormId}`}
+              className="rounded-lg bg-bolt-500 px-4 py-2 font-semibold text-storm-950 hover:bg-bolt-400"
+            >
+              Watch on Radar
+            </Link>
+          )}
+          <Link
+            href="/sandbox"
+            className="rounded-lg border border-storm-700 px-4 py-2 text-gray-300 hover:bg-storm-800"
+          >
+            Create Another Storm
+          </Link>
+        </div>
       </div>
     );
   }

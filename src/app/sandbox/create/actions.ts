@@ -6,6 +6,7 @@ import type { OutlookResult } from "@/lib/outlookEngine";
 export type SaveStormResult = {
   success: boolean;
   message: string;
+  stormId?: string;
 };
 
 export async function saveStorm(
@@ -27,21 +28,25 @@ export async function saveStorm(
     };
   }
 
-  const { error } = await supabase.from("storms").insert({
-    user_id: user.id,
-    storm_type: stormType,
-    region,
-    parameters,
-    outlook_text: `${outlook.headline} ${outlook.explanation}`,
-    stats: null,
-  });
+  const { data, error } = await supabase
+    .from("storms")
+    .insert({
+      user_id: user.id,
+      storm_type: stormType,
+      region,
+      parameters,
+      outlook_text: `${outlook.headline} ${outlook.explanation}`,
+      stats: null,
+    })
+    .select("id")
+    .single();
 
-  if (error) {
+  if (error || !data) {
     return {
       success: false,
       message: "Something went wrong saving your storm. Please try again.",
     };
   }
 
-  return { success: true, message: "Storm saved." };
+  return { success: true, message: "Storm saved.", stormId: data.id };
 }
