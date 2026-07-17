@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import { submitRating } from "@/app/account/rate/actions";
+import BadgeEarnedNotice from "@/components/BadgeEarnedNotice";
 
 function Star({ filled, size = 40 }: { filled: boolean; size?: number }) {
   return (
@@ -28,6 +29,7 @@ export default function RatingForm() {
   const [result, setResult] = useState<{
     success: boolean;
     message: string;
+    newBadges?: string[];
   } | null>(null);
 
   async function handleSubmit() {
@@ -46,6 +48,7 @@ export default function RatingForm() {
           ))}
         </div>
         <p className="text-xl font-semibold text-bolt-500">{result.message}</p>
+        <BadgeEarnedNotice badgeNames={result.newBadges ?? []} />
       </div>
     );
   }

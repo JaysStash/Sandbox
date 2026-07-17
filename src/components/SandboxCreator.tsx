@@ -4,6 +4,7 @@ import { useMemo, useState } from "react";
 import Link from "next/link";
 import ParameterSlider from "@/components/ParameterSlider";
 import OutlookBox from "@/components/OutlookBox";
+import BadgeEarnedNotice from "@/components/BadgeEarnedNotice";
 import {
   calculateTornadoOutlook,
   type TornadoParameters,
@@ -59,6 +60,7 @@ export default function SandboxCreator({
     success: boolean;
     message: string;
     stormId?: string;
+    newBadges?: string[];
   } | null>(null);
 
   const outlook = useMemo(() => {
@@ -95,6 +97,8 @@ export default function SandboxCreator({
         />
         <h1 className="text-2xl font-bold text-bolt-500">Storm Saved!</h1>
         <p className="mt-3 text-gray-300">{outlook.headline}</p>
+
+        <BadgeEarnedNotice badgeNames={saveResult.newBadges ?? []} />
 
         <div className="mt-6 flex flex-col gap-3">
           {saveResult.stormId && (

@@ -1,10 +1,12 @@
 "use server";
 
 import { createClient } from "@/lib/supabase/server";
+import { checkAndAwardBadges } from "@/lib/badgeChecker";
 
 export type RatingActionResult = {
   success: boolean;
   message: string;
+  newBadges?: string[];
 };
 
 export async function submitRating(
@@ -38,5 +40,7 @@ export async function submitRating(
     };
   }
 
-  return { success: true, message: "Thanks for the feedback!" };
+  const newBadges = await checkAndAwardBadges(supabase, user.id);
+
+  return { success: true, message: "Thanks for the feedback!", newBadges };
 }

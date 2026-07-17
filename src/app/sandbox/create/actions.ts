@@ -1,12 +1,14 @@
 "use server";
 
 import { createClient } from "@/lib/supabase/server";
+import { checkAndAwardBadges } from "@/lib/badgeChecker";
 import type { OutlookResult } from "@/lib/outlookEngine";
 
 export type SaveStormResult = {
   success: boolean;
   message: string;
   stormId?: string;
+  newBadges?: string[];
 };
 
 export async function saveStorm(
@@ -48,5 +50,12 @@ export async function saveStorm(
     };
   }
 
-  return { success: true, message: "Storm saved.", stormId: data.id };
+  const newBadges = await checkAndAwardBadges(supabase, user.id);
+
+  return {
+    success: true,
+    message: "Storm saved.",
+    stormId: data.id,
+    newBadges,
+  };
 }
