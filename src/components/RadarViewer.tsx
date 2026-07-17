@@ -1,12 +1,14 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import maplibregl from "maplibre-gl";
 import "maplibre-gl/dist/maplibre-gl.css";
 import { generateStormTrack, type StormFrame } from "@/lib/stormTrack";
 import { destinationPoint } from "@/lib/regions";
 import type { OutlookResult, TornadoParameters } from "@/lib/outlookEngine";
 import { calculateDamageEstimate } from "@/lib/damageEstimator";
+import { ValueNoise2D, clamp } from "@/lib/noise";
+import { drawReflectivity, drawVelocity } from "@/lib/stormShapeRenderer";
 import DamageStatsPanel from "@/components/DamageStatsPanel";
 
 type Props = {
@@ -18,6 +20,33 @@ type Props = {
 };
 
 const FRAME_INTERVAL_MS = 150;
+const CANVAS_SIZE = 128;
+const DEG2RAD = Math.PI / 180;
+
+function seedFromString(s: string): number {
+  let hash = 0;
+  for (let i = 0; i < s.length; i++) {
+    hash = (hash * 31 + s.charCodeAt(i)) | 0;
+  }
+  return hash || 42;
+}
+
+function boundsFromCenter(
+  center: { lat: number; lng: number },
+  boxSizeKm: number
+): [[number, number], [number, number], [number, number], [number, number]] {
+  const halfDiag = (boxSizeKm * Math.SQRT2) / 2;
+  const nw = destinationPoint(center.lat, center.lng, 315, halfDiag);
+  const ne = destinationPoint(center.lat, center.lng, 45, halfDiag);
+  const se = destinationPoint(center.lat, center.lng, 135, halfDiag);
+  const sw = destinationPoint(center.lat, center.lng, 225, halfDiag);
+  return [
+    [nw.lng, nw.lat],
+    [ne.lng, ne.lat],
+    [se.lng, se.lat],
+    [sw.lng, sw.lat],
+  ];
+}
 
 export default function RadarViewer({
   region,
@@ -29,6 +58,9 @@ export default function RadarViewer({
   const mapContainerRef = useRef<HTMLDivElement>(null);
   const mapRef = useRef<maplibregl.Map | null>(null);
   const framesRef = useRef<StormFrame[]>([]);
+  const reflectivityCanvasRef = useRef<HTMLCanvasElement | null>(null);
+  const velocityCanvasRef = useRef<HTMLCanvasElement | null>(null);
+  const noiseRef = useRef<ValueNoise2D | null>(null);
 
   const [ready, setReady] = useState(false);
   const [frameIndex, setFrameIndex] = useState(0);
@@ -38,15 +70,62 @@ export default function RadarViewer({
   );
   const [showStats, setShowStats] = useState(false);
 
-  // Generate the track once per storm
+  // Derived "potential" for this storm - fixed for its whole life, driven by
+  // its actual parameters. Lifecycle intensity (per-frame) modulates these.
+  const shapePotential = useMemo(() => {
+    const sizeFactor = clamp(parameters.sbcape / 4000, 0.2, 1);
+    const elongation = clamp(parameters.shear_0_6km / 70, 0.1, 1);
+    const hookStrengthBase = outlook.supercellLikely
+      ? clamp(parameters.srh_0_1km / 400, 0.15, 1)
+      : 0;
+    const precipShieldBreadth = clamp(parameters.pwat / 2.0, 0.2, 1);
+    const coreIntensity = clamp(parameters.mucape / 5000, 0.3, 1);
+    const velocitySizeFactor = clamp(parameters.srh_0_1km / 400, 0.2, 1);
+    const velocityStrengthBase = outlook.supercellLikely
+      ? clamp(
+          (parameters.srh_0_1km / 400 + parameters.shear_0_6km / 70) / 2,
+          0.15,
+          1
+        )
+      : 0.03;
+    // Real-world box sizes in km - a supercell's precip shield is roughly
+    // 20-60km across; its mesocyclone/couplet is a much smaller feature.
+    const reflectivityBoxKm = 20 + sizeFactor * 45;
+    const velocityBoxKm = 8 + velocitySizeFactor * 14;
+
+    return {
+      sizeFactor,
+      elongation,
+      hookStrengthBase,
+      precipShieldBreadth,
+      coreIntensity,
+      velocitySizeFactor,
+      velocityStrengthBase,
+      reflectivityBoxKm,
+      velocityBoxKm,
+    };
+  }, [parameters, outlook.supercellLikely]);
+
   useEffect(() => {
     framesRef.current = generateStormTrack(regionCenter, parameters, outlook);
+    noiseRef.current = new ValueNoise2D(seedFromString(region));
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // Initialize the map once
+  // Initialize the map + canvas sources once
   useEffect(() => {
     if (!mapContainerRef.current || mapRef.current) return;
+
+    if (!reflectivityCanvasRef.current) {
+      reflectivityCanvasRef.current = document.createElement("canvas");
+      reflectivityCanvasRef.current.width = CANVAS_SIZE;
+      reflectivityCanvasRef.current.height = CANVAS_SIZE;
+    }
+    if (!velocityCanvasRef.current) {
+      velocityCanvasRef.current = document.createElement("canvas");
+      velocityCanvasRef.current.width = CANVAS_SIZE;
+      velocityCanvasRef.current.height = CANVAS_SIZE;
+    }
 
     const map = new maplibregl.Map({
       container: mapContainerRef.current,
@@ -74,71 +153,53 @@ export default function RadarViewer({
     map.addControl(new maplibregl.NavigationControl(), "top-right");
 
     map.on("load", () => {
-      map.addSource("storm-cell", {
-        type: "geojson",
-        data: { type: "FeatureCollection", features: [] },
-      });
+      const frames = framesRef.current;
+      const first = frames[0] ?? { lat: regionCenter.lat, lng: regionCenter.lng };
+
+      const reflectivityCoords = boundsFromCenter(
+        { lat: first.lat, lng: first.lng },
+        shapePotential.reflectivityBoxKm
+      );
+      const velocityCoords = boundsFromCenter(
+        { lat: first.lat, lng: first.lng },
+        shapePotential.velocityBoxKm
+      );
+
+      map.addSource("reflectivity-canvas", {
+        type: "canvas",
+        canvas: reflectivityCanvasRef.current!,
+        coordinates: reflectivityCoords,
+        animate: true,
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      } as any);
 
       map.addLayer({
-        id: "storm-reflectivity",
-        type: "heatmap",
-        source: "storm-cell",
-        paint: {
-          "heatmap-weight": ["get", "weight"],
-          "heatmap-intensity": 1.5,
-          "heatmap-radius": 45,
-          "heatmap-opacity": 0.85,
-          "heatmap-color": [
-            "interpolate",
-            ["linear"],
-            ["heatmap-density"],
-            0,
-            "rgba(0,0,0,0)",
-            0.2,
-            "#2ecc71",
-            0.4,
-            "#f1c40f",
-            0.6,
-            "#e67e22",
-            0.8,
-            "#e74c3c",
-            1,
-            "#d500f9",
-          ],
-        },
+        id: "reflectivity-layer",
+        type: "raster",
+        source: "reflectivity-canvas",
+        paint: { "raster-opacity": 0.92, "raster-fade-duration": 0 },
       });
 
-      map.addSource("storm-couplet", {
-        type: "geojson",
-        data: { type: "FeatureCollection", features: [] },
-      });
+      map.addSource("velocity-canvas", {
+        type: "canvas",
+        canvas: velocityCanvasRef.current!,
+        coordinates: velocityCoords,
+        animate: true,
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      } as any);
 
       map.addLayer({
-        id: "storm-velocity",
-        type: "circle",
-        source: "storm-couplet",
-        paint: {
-          "circle-radius": 18,
-          "circle-blur": 0.6,
-          "circle-opacity": 0.85,
-          "circle-color": [
-            "match",
-            ["get", "kind"],
-            "inbound",
-            "#22c55e",
-            "outbound",
-            "#ef4444",
-            "#888888",
-          ],
-        },
+        id: "velocity-layer",
+        type: "raster",
+        source: "velocity-canvas",
+        paint: { "raster-opacity": 0.92, "raster-fade-duration": 0 },
         layout: { visibility: "none" },
       });
 
-      const frames = framesRef.current;
       if (frames.length > 0) {
         const bounds = new maplibregl.LngLatBounds();
         frames.forEach((f) => bounds.extend([f.lng, f.lat]));
-        map.fitBounds(bounds, { padding: 60, duration: 0 });
+        map.fitBounds(bounds, { padding: 80, duration: 0 });
       }
 
       setReady(true);
@@ -158,97 +219,74 @@ export default function RadarViewer({
     const map = mapRef.current;
     if (!map || !ready) return;
     map.setLayoutProperty(
-      "storm-reflectivity",
+      "reflectivity-layer",
       "visibility",
       overlay === "reflectivity" ? "visible" : "none"
     );
     map.setLayoutProperty(
-      "storm-velocity",
+      "velocity-layer",
       "visibility",
       overlay === "velocity" ? "visible" : "none"
     );
   }, [overlay, ready]);
 
-  // Update storm position/appearance each frame
+  // Redraw the canvases and reposition them each frame
   useEffect(() => {
     const map = mapRef.current;
     const frames = framesRef.current;
-    if (!map || !ready || frames.length === 0) return;
+    const noise = noiseRef.current;
+    const reflCanvas = reflectivityCanvasRef.current;
+    const velCanvas = velocityCanvasRef.current;
+    if (!map || !ready || !noise || !reflCanvas || !velCanvas) return;
+    if (frames.length === 0) return;
 
     const frame = frames[frameIndex];
+    const orientationRad = frame.bearingDeg * DEG2RAD;
 
-    const cellFeatures: any[] = [
-      {
-        type: "Feature",
-        geometry: { type: "Point", coordinates: [frame.lng, frame.lat] },
-        properties: { weight: frame.intensity },
-      },
-    ];
-
-    if (outlook.supercellLikely) {
-      const hookOffset = 0.008 + frame.intensity * 0.008;
-      cellFeatures.push({
-        type: "Feature",
-        geometry: {
-          type: "Point",
-          coordinates: [frame.lng - hookOffset, frame.lat - hookOffset * 0.6],
-        },
-        properties: { weight: frame.intensity * 0.7 },
+    const reflCtx = reflCanvas.getContext("2d");
+    if (reflCtx) {
+      drawReflectivity(reflCtx, CANVAS_SIZE, noise, {
+        sizeFactor: shapePotential.sizeFactor,
+        elongation: shapePotential.elongation,
+        hookStrength: shapePotential.hookStrengthBase * frame.intensity,
+        precipShieldBreadth: shapePotential.precipShieldBreadth,
+        coreIntensity: shapePotential.coreIntensity,
+        orientationRad,
+        lifecycleIntensity: frame.intensity,
+        time: frameIndex * 0.5,
       });
     }
 
-    const cellSource = map.getSource("storm-cell") as
-      | maplibregl.GeoJSONSource
-      | undefined;
-    cellSource?.setData({
-      type: "FeatureCollection",
-      features: cellFeatures,
-    });
-
-    const coupletFeatures: any[] = [];
-    if (frame.showMesocyclone) {
-      const left = destinationPoint(
-        frame.lat,
-        frame.lng,
-        frame.bearingDeg + 90,
-        1.2
-      );
-      const right = destinationPoint(
-        frame.lat,
-        frame.lng,
-        frame.bearingDeg - 90,
-        1.2
-      );
-      coupletFeatures.push(
-        {
-          type: "Feature",
-          geometry: { type: "Point", coordinates: [left.lng, left.lat] },
-          properties: { kind: "inbound" },
-        },
-        {
-          type: "Feature",
-          geometry: { type: "Point", coordinates: [right.lng, right.lat] },
-          properties: { kind: "outbound" },
-        }
-      );
+    const velCtx = velCanvas.getContext("2d");
+    if (velCtx) {
+      drawVelocity(velCtx, CANVAS_SIZE, {
+        sizeFactor: shapePotential.velocitySizeFactor,
+        strength: shapePotential.velocityStrengthBase,
+        orientationRad,
+        lifecycleIntensity: frame.intensity,
+        active: outlook.supercellLikely,
+      });
     }
 
-    const coupletSource = map.getSource("storm-couplet") as
-      | maplibregl.GeoJSONSource
-      | undefined;
-    coupletSource?.setData({
-      type: "FeatureCollection",
-      features: coupletFeatures,
-    });
+    const reflSource = map.getSource("reflectivity-canvas");
+    const velSource = map.getSource("velocity-canvas");
+    const center = { lat: frame.lat, lng: frame.lng };
+
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    (reflSource as any)?.setCoordinates(
+      boundsFromCenter(center, shapePotential.reflectivityBoxKm)
+    );
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    (velSource as any)?.setCoordinates(
+      boundsFromCenter(center, shapePotential.velocityBoxKm)
+    );
 
     if (playing) {
-      map.easeTo({
-        center: [frame.lng, frame.lat],
-        zoom: 9,
-        duration: FRAME_INTERVAL_MS,
-      });
+      // Pan only - never zoom in tight, so the storm stays visible within
+      // its full regional context rather than filling the whole screen.
+      map.easeTo({ center: [frame.lng, frame.lat], duration: FRAME_INTERVAL_MS });
     }
-  }, [frameIndex, ready, playing, outlook.supercellLikely]);
+  }, [frameIndex, ready, playing, outlook.supercellLikely, shapePotential]);
 
   // Playback loop
   useEffect(() => {
@@ -274,10 +312,7 @@ export default function RadarViewer({
 
   return (
     <div>
-      <div
-        ref={mapContainerRef}
-        className="h-[45vh] w-full sm:h-[55vh]"
-      />
+      <div ref={mapContainerRef} className="h-[45vh] w-full sm:h-[55vh]" />
 
       <div className="border-t border-storm-700 bg-storm-900 p-3">
         <div className="flex gap-2">
