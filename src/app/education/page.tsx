@@ -3,10 +3,23 @@ import { STORM_TYPES } from "@/lib/stormTypes";
 import EducationBrowser from "@/components/EducationBrowser";
 import FaqAccordion from "@/components/FaqAccordion";
 
+type ParamDefRow = {
+  storm_type: string;
+  category: string;
+  name: string;
+  description: string | null;
+  unit: string | null;
+};
+
+type FaqItem = {
+  question: string;
+  answer: string;
+};
+
 export default async function EducationPage() {
   const supabase = await createClient();
 
-  const [{ data: paramData }, { data: glossaryRow }] = await Promise.all([
+  const [{ data: paramDataRaw }, { data: glossaryRow }] = await Promise.all([
     supabase
       .from("storm_parameter_definitions")
       .select("storm_type, category, name, description, unit")
@@ -14,12 +27,16 @@ export default async function EducationPage() {
     supabase.from("site_content").select("content").eq("key", "glossary").single(),
   ]);
 
+  const paramData: ParamDefRow[] = paramDataRaw ?? [];
+
   const stormTypesWithParams = STORM_TYPES.map((type) => ({
     ...type,
-    parameters: (paramData ?? []).filter((p) => p.storm_type === type.slug),
+    parameters: paramData.filter(
+      (p: ParamDefRow) => p.storm_type === type.slug
+    ),
   }));
 
-  const glossaryItems = Array.isArray(glossaryRow?.content)
+  const glossaryItems: FaqItem[] = Array.isArray(glossaryRow?.content)
     ? glossaryRow.content
     : [];
 

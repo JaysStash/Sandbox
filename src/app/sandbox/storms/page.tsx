@@ -3,6 +3,14 @@ import { createClient } from "@/lib/supabase/server";
 import { calculateTornadoOutlook, type TornadoParameters } from "@/lib/outlookEngine";
 import { getStormType } from "@/lib/stormTypes";
 
+type StormListRow = {
+  id: string;
+  storm_type: string;
+  region: string;
+  parameters: Record<string, number>;
+  created_at: string;
+};
+
 export default async function MyStormsPage() {
   const supabase = await createClient();
 
@@ -25,11 +33,13 @@ export default async function MyStormsPage() {
     );
   }
 
-  const { data: storms } = await supabase
+  const { data: stormsRaw } = await supabase
     .from("storms")
     .select("id, storm_type, region, parameters, created_at")
     .eq("user_id", user.id)
     .order("created_at", { ascending: false });
+
+  const storms: StormListRow[] = stormsRaw ?? [];
 
   return (
     <div className="mx-auto max-w-2xl px-4 py-12">
@@ -39,7 +49,7 @@ export default async function MyStormsPage() {
       </p>
 
       <div className="mt-8 space-y-3">
-        {(!storms || storms.length === 0) && (
+        {storms.length === 0 && (
           <div className="rounded-xl border border-storm-700 bg-storm-900 p-6 text-center">
             <p className="text-gray-300">
               You haven&apos;t created any storms yet.
@@ -53,7 +63,7 @@ export default async function MyStormsPage() {
           </div>
         )}
 
-        {storms?.map((storm) => {
+        {storms.map((storm: StormListRow) => {
           const outlook = calculateTornadoOutlook(
             storm.parameters as TornadoParameters
           );

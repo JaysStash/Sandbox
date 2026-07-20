@@ -2,6 +2,18 @@ import Link from "next/link";
 import { createClient } from "@/lib/supabase/server";
 import BadgeCard from "@/components/BadgeCard";
 
+type BadgeRow = {
+  id: string;
+  name: string;
+  description: string | null;
+  icon: string;
+  tier: string;
+};
+
+type UserBadgeRow = {
+  badge_id: string;
+};
+
 export default async function ProfilePage() {
   const supabase = await createClient();
 
@@ -30,19 +42,23 @@ export default async function ProfilePage() {
     .eq("id", user.id)
     .single();
 
-  const { data: allBadges } = await supabase
+  const { data: allBadgesRaw } = await supabase
     .from("badges")
     .select("id, name, description, icon, tier")
     .eq("is_active", true);
+  const allBadges: BadgeRow[] = allBadgesRaw ?? [];
 
-  const { data: earned } = await supabase
+  const { data: earnedRaw } = await supabase
     .from("user_badges")
     .select("badge_id")
     .eq("user_id", user.id);
+  const earned: UserBadgeRow[] = earnedRaw ?? [];
 
-  const earnedIds = new Set((earned ?? []).map((e) => e.badge_id));
-  const earnedBadges = (allBadges ?? []).filter((b) => earnedIds.has(b.id));
-  const lockedBadges = (allBadges ?? []).filter((b) => !earnedIds.has(b.id));
+  const earnedIds = new Set<string>(
+    earned.map((e: UserBadgeRow) => e.badge_id)
+  );
+  const earnedBadges = allBadges.filter((b: BadgeRow) => earnedIds.has(b.id));
+  const lockedBadges = allBadges.filter((b: BadgeRow) => !earnedIds.has(b.id));
 
   return (
     <div className="mx-auto max-w-2xl px-4 py-12">
@@ -75,7 +91,7 @@ export default async function ProfilePage() {
         </p>
       ) : (
         <div className="mt-4 grid grid-cols-2 gap-3 sm:grid-cols-3">
-          {earnedBadges.map((b) => (
+          {earnedBadges.map((b: BadgeRow) => (
             <BadgeCard
               key={b.id}
               name={b.name}
@@ -94,7 +110,7 @@ export default async function ProfilePage() {
             Locked ({lockedBadges.length})
           </h2>
           <div className="mt-4 grid grid-cols-2 gap-3 sm:grid-cols-3">
-            {lockedBadges.map((b) => (
+            {lockedBadges.map((b: BadgeRow) => (
               <BadgeCard
                 key={b.id}
                 name={b.name}

@@ -7,6 +7,26 @@ type BadgeCriteria =
   | { type: "unique_regions"; count: number }
   | { type: "manual" };
 
+type BadgeRow = {
+  id: string;
+  name: string;
+  criteria: BadgeCriteria | null;
+};
+
+type UserBadgeRow = {
+  badge_id: string;
+};
+
+type StormRow = {
+  storm_type: string;
+  region: string;
+  outlook_text: string | null;
+};
+
+type RatingRow = {
+  stars: number;
+};
+
 // Checks every active badge's criteria against the user's current activity
 // and awards any newly-earned ones. Safe to call repeatedly - already-earned
 // badges are skipped, and the unique(user_id, badge_id) constraint prevents
@@ -16,38 +36,48 @@ export async function checkAndAwardBadges(
   supabase: any,
   userId: string
 ): Promise<string[]> {
-  const { data: badges } = await supabase
+  const { data: badgesData } = await supabase
     .from("badges")
     .select("id, name, criteria")
     .eq("is_active", true);
+  const badges: BadgeRow[] = badgesData ?? [];
 
-  if (!badges || badges.length === 0) return [];
+  if (badges.length === 0) return [];
 
-  const { data: existing } = await supabase
+  const { data: existingData } = await supabase
     .from("user_badges")
     .select("badge_id")
     .eq("user_id", userId);
+  const existing: UserBadgeRow[] = existingData ?? [];
 
-  const alreadyEarned = new Set((existing ?? []).map((b) => b.badge_id));
+  const alreadyEarned = new Set<string>(
+    existing.map((row: UserBadgeRow) => row.badge_id)
+  );
 
-  const { data: storms } = await supabase
+  const { data: stormsData } = await supabase
     .from("storms")
     .select("storm_type, region, outlook_text")
     .eq("user_id", userId);
+  const stormList: StormRow[] = stormsData ?? [];
 
-  const { data: ratings } = await supabase
+  const { data: ratingsData } = await supabase
     .from("ratings")
     .select("stars")
     .eq("user_id", userId);
-
-  const stormList = storms ?? [];
-  const ratingList = ratings ?? [];
+  const ratingList: RatingRow[] = ratingsData ?? [];
 
   const stormCount = stormList.length;
-  const stormTypesUsed = new Set(stormList.map((s) => s.storm_type));
-  const uniqueRegions = new Set(stormList.map((s) => s.region));
+  const stormTypesUsed = new Set<string>(
+    stormList.map((s: StormRow) => s.storm_type)
+  );
+  const uniqueRegions = new Set<string>(
+    stormList.map((s: StormRow) => s.region)
+  );
   const ratingGiven = ratingList.length > 0;
-  const maxRating = ratingList.reduce((max, r) => Math.max(max, r.stars), 0);
+  const maxRating = ratingList.reduce(
+    (max: number, r: RatingRow) => Math.max(max, r.stars),
+    0
+  );
 
   const reachedCategories = new Set<string>();
   for (const s of stormList) {
@@ -61,7 +91,7 @@ export async function checkAndAwardBadges(
 
   for (const badge of badges) {
     if (alreadyEarned.has(badge.id)) continue;
-    const criteria = badge.criteria as BadgeCriteria | null;
+    const criteria = badge.criteria;
     if (!criteria) continue;
 
     let earned = false;
