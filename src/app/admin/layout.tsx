@@ -7,6 +7,11 @@ const NAV_ITEMS = [
   { href: "/admin/contact-form", label: "Contact Form" },
   { href: "/admin/contact-submissions", label: "Submissions" },
   { href: "/admin/ratings", label: "Ratings" },
+  { href: "/admin/badges", label: "Badges" },
+  { href: "/admin/storm-parameters", label: "Storm Parameters" },
+  { href: "/admin/users", label: "Users" },
+  { href: "/admin/admins", label: "Admin Roles" },
+  { href: "/admin/analytics", label: "Analytics" },
   { href: "/admin/settings", label: "Settings" },
 ];
 
