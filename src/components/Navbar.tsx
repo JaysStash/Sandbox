@@ -92,7 +92,10 @@ export default function Navbar() {
                   Rate
                 </Link>
                 {user && (
-                  <Link href="/admin" className="block rounded px-3 py-2 hover:bg-storm-800">
+                  <Link
+                    href="/admin"
+                    className="block rounded px-3 py-2 font-semibold text-bolt-500 hover:bg-storm-800"
+                  >
                     Admin
                   </Link>
                 )}

@@ -1,5 +1,5 @@
 import { destinationPoint } from "@/lib/regions";
-import type { OutlookResult } from "@/lib/outlookEngine";
+import type { OutlookResult, TornadoParameters } from "@/lib/outlookEngine";
 
 export type StormFrame = {
   lat: number;
@@ -20,7 +20,7 @@ function lifecycleIntensity(t: number): number {
 
 export function generateStormTrack(
   center: { lat: number; lng: number },
-  parameters: Record<string, number>,
+  parameters: TornadoParameters,
   outlook: OutlookResult
 ): StormFrame[] {
   const baseBearing = 55; // typical US severe-storm motion: WSW to ENE
