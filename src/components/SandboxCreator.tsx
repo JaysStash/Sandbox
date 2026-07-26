@@ -6,7 +6,7 @@ import ParameterSlider from "@/components/ParameterSlider";
 import OutlookBox from "@/components/OutlookBox";
 import BadgeEarnedNotice from "@/components/BadgeEarnedNotice";
 import {
-  calculateTornadoOutlook,
+  calculateOutlookForType,
   type TornadoParameters,
 } from "@/lib/outlookEngine";
 import { saveStorm } from "@/app/sandbox/create/actions";
@@ -64,8 +64,8 @@ export default function SandboxCreator({
   } | null>(null);
 
   const outlook = useMemo(() => {
-    return calculateTornadoOutlook(values as unknown as TornadoParameters);
-  }, [values]);
+    return calculateOutlookForType(stormType, values as unknown as TornadoParameters);
+  }, [stormType, values]);
 
   const grouped = useMemo(() => {
     const map = new Map<string, ParamDef[]>();

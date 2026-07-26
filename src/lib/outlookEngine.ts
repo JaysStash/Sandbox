@@ -54,6 +54,8 @@ export type OutlookResult = {
     ehi1: number;
     ehi3: number;
     brn: number;
+    hailInches?: number;
+    gustMph?: number;
   };
 };
 
@@ -200,4 +202,266 @@ export function calculateTornadoOutlook(
     supercellLikely,
     diagnostics: { stp, scp, ehi1, ehi3, brn },
   };
+}
+
+// ============================================================
+// Supercell Outlook Engine
+// Uses the same atmospheric parameters as the Tornado engine, but weights
+// them toward general supercell organization, large hail, and damaging
+// wind - not tornado-specific genesis ingredients. Driven primarily by the
+// Supercell Composite Parameter rather than STP.
+// ============================================================
+
+export type SupercellOutlookResult = {
+  category: RiskCategory;
+  categoryLabel: string;
+  categoryColor: string;
+  headline: string;
+  explanation: string;
+  organizedModeLikely: boolean;
+  diagnostics: {
+    scp: number;
+    brn: number;
+    estimatedHailInches: number;
+    estimatedGustMph: number;
+  };
+};
+
+function estimateHailInches(p: TornadoParameters): number {
+  const capeTerm = clamp(p.mucape / 4000, 0, 1.3);
+  const lapseTerm = clamp((p.lapse_rate_700_500mb - 6) / 3, 0, 1);
+  const meltTerm = clamp((3500 - p.wet_bulb_zero_height) / 2000, 0, 1);
+  const shearTerm = clamp(p.shear_0_6km / 50, 0.3, 1);
+  const growthScore = capeTerm * 0.5 + lapseTerm * 0.2 + meltTerm * 0.2 + shearTerm * 0.1;
+  return clamp(growthScore * 4.5, 0, 4.5);
+}
+
+function estimateGustMph(p: TornadoParameters): number {
+  const dcapeTerm = clamp(p.dcape / 1200, 0, 1.2);
+  const dryTerm = clamp(p.td_depression_700mb / 20, 0.3, 1);
+  const shearTerm = clamp(p.shear_0_6km / 50, 0.3, 1);
+  const gustScore = dcapeTerm * 0.55 + dryTerm * 0.25 + shearTerm * 0.2;
+  return 25 + clamp(gustScore, 0, 1.3) * 70; // roughly 25-115 mph range
+}
+
+export function calculateSupercellOutlook(
+  p: TornadoParameters
+): SupercellOutlookResult {
+  const shear06_ms = p.shear_0_6km * KT_TO_MS;
+  const ebwdTerm = ramp(shear06_ms, 10, 20);
+  const scp = (p.mucape / 1000) * (p.srh_effective / 50) * ebwdTerm;
+  const brn = shear06_ms > 0 ? p.sbcape / (0.5 * shear06_ms * shear06_ms) : 999;
+  const organizedModeLikely = brn >= 8 && brn <= 55 && scp >= 0.4;
+
+  const estimatedHailInches = estimateHailInches(p);
+  const estimatedGustMph = estimateGustMph(p);
+  const hazardScore = Math.max(estimatedHailInches / 2.5, (estimatedGustMph - 25) / 65);
+
+  let category: RiskCategory;
+  if (!organizedModeLikely) {
+    category = hazardScore > 0.3 ? "MRGL" : "TSTM";
+  } else if (scp >= 6 || hazardScore >= 1.1) {
+    category = "HIGH";
+  } else if (scp >= 3 || hazardScore >= 0.85) {
+    category = "MDT";
+  } else if (scp >= 1.5 || hazardScore >= 0.6) {
+    category = "ENH";
+  } else if (scp >= 0.5 || hazardScore >= 0.35) {
+    category = "SLGT";
+  } else if (scp > 0.1) {
+    category = "MRGL";
+  } else {
+    category = "TSTM";
+  }
+
+  const meta = CATEGORY_META[category];
+  const notes: string[] = [];
+
+  if (!organizedModeLikely) {
+    notes.push(
+      brn < 8
+        ? "shear is overwhelming relative to instability, favoring high-shear/low-CAPE messy convection over a discrete supercell"
+        : brn > 55
+        ? "instability is high relative to shear, favoring pulse or multicell storms over a sustained supercell"
+        : "effective shear is too weak to organize and maintain a supercell updraft"
+    );
+  } else {
+    if (estimatedHailInches >= 1.5) {
+      notes.push("strong instability and mid-level lapse rates support significant large hail");
+    } else if (estimatedHailInches >= 1) {
+      notes.push("conditions support hail at or above the severe threshold");
+    }
+    if (estimatedGustMph >= 70) {
+      notes.push("strong downdraft potential and dry mid-level air support damaging wind gusts");
+    }
+    if (p.shear_0_6km >= 45) {
+      notes.push("ample deep-layer shear supports a well-organized, longer-lived storm");
+    }
+  }
+
+  const explanation =
+    notes.length > 0
+      ? `This setup shows ${notes.join("; ")}.`
+      : "Parameters are relatively balanced with no single dominant hazard.";
+
+  const headline = organizedModeLikely
+    ? `${meta.label}: expect up to ${estimatedHailInches.toFixed(1)}" hail and gusts near ${Math.round(
+        estimatedGustMph
+      )} mph from an organized supercell`
+    : `${meta.label}: a sustained, well-organized supercell is not well supported by this combination`;
+
+  return {
+    category,
+    categoryLabel: meta.label,
+    categoryColor: meta.color,
+    headline,
+    explanation,
+    organizedModeLikely,
+    diagnostics: { scp, brn, estimatedHailInches, estimatedGustMph },
+  };
+}
+
+// ============================================================
+// Hail Storm Outlook Engine
+// Same underlying parameters, weighted specifically toward hail growth
+// physics: updraft strength, mid-level lapse rates, and melting layer depth.
+// ============================================================
+
+export type HailOutlookResult = {
+  category: RiskCategory;
+  categoryLabel: string;
+  categoryColor: string;
+  headline: string;
+  explanation: string;
+  organizedModeLikely: boolean;
+  diagnostics: {
+    estimatedHailInches: number;
+    brn: number;
+  };
+};
+
+export function calculateHailOutlook(p: TornadoParameters): HailOutlookResult {
+  const shear06_ms = p.shear_0_6km * KT_TO_MS;
+  const brn = shear06_ms > 0 ? p.sbcape / (0.5 * shear06_ms * shear06_ms) : 999;
+  const organizedModeLikely = brn >= 6 && brn <= 60 && p.shear_0_6km >= 20;
+
+  const estimatedHailInches = estimateHailInches(p);
+
+  let category: RiskCategory;
+  if (!organizedModeLikely) {
+    category = estimatedHailInches > 0.5 ? "MRGL" : "TSTM";
+  } else if (estimatedHailInches >= 2.75) {
+    category = "HIGH";
+  } else if (estimatedHailInches >= 2.0) {
+    category = "MDT";
+  } else if (estimatedHailInches >= 1.5) {
+    category = "ENH";
+  } else if (estimatedHailInches >= 1.0) {
+    category = "SLGT";
+  } else if (estimatedHailInches >= 0.75) {
+    category = "MRGL";
+  } else {
+    category = "TSTM";
+  }
+
+  const meta = CATEGORY_META[category];
+  const notes: string[] = [];
+
+  if (!organizedModeLikely) {
+    notes.push(
+      "deep-layer shear is too weak to organize and sustain a hail-producing updraft"
+    );
+  } else {
+    if (p.mucape >= 3000) {
+      notes.push("very strong instability supports a powerful, sustained hail-growth updraft");
+    }
+    if (p.lapse_rate_700_500mb >= 7.5) {
+      notes.push("steep mid-level lapse rates enhance the hail-growth zone");
+    }
+    if (p.wet_bulb_zero_height <= 2600) {
+      notes.push("a low wet-bulb zero height limits melting on the way down, favoring larger stones reaching the ground");
+    } else if (p.wet_bulb_zero_height >= 3800) {
+      notes.push("a high wet-bulb zero height means more melting time, limiting hail size at the surface despite other favorable factors");
+    }
+  }
+
+  const explanation =
+    notes.length > 0
+      ? `This setup shows ${notes.join("; ")}.`
+      : "Parameters are relatively balanced with no single dominant factor.";
+
+  const headline = organizedModeLikely
+    ? `${meta.label}: hail up to ${estimatedHailInches.toFixed(1)}" in diameter is possible`
+    : `${meta.label}: a sustained hail-producing updraft is not well supported by this combination`;
+
+  return {
+    category,
+    categoryLabel: meta.label,
+    categoryColor: meta.color,
+    headline,
+    explanation,
+    organizedModeLikely,
+    diagnostics: { estimatedHailInches, brn },
+  };
+}
+
+// ============================================================
+// Adapters + dispatcher so the shared Sandbox/Radar UI can work with any
+// storm type's specialized outlook engine without needing to know its
+// internal shape. The radar physics engine and storm track generator only
+// ever read `category` and `supercellLikely` from this common shape.
+// ============================================================
+
+export function supercellToOutlookResult(
+  r: SupercellOutlookResult
+): OutlookResult {
+  return {
+    category: r.category,
+    categoryLabel: r.categoryLabel,
+    categoryColor: r.categoryColor,
+    headline: r.headline,
+    explanation: r.explanation,
+    supercellLikely: r.organizedModeLikely,
+    diagnostics: {
+      stp: 0,
+      scp: r.diagnostics.scp,
+      ehi1: 0,
+      ehi3: 0,
+      brn: r.diagnostics.brn,
+      hailInches: r.diagnostics.estimatedHailInches,
+      gustMph: r.diagnostics.estimatedGustMph,
+    },
+  };
+}
+
+export function hailToOutlookResult(r: HailOutlookResult): OutlookResult {
+  return {
+    category: r.category,
+    categoryLabel: r.categoryLabel,
+    categoryColor: r.categoryColor,
+    headline: r.headline,
+    explanation: r.explanation,
+    supercellLikely: r.organizedModeLikely,
+    diagnostics: {
+      stp: 0,
+      scp: 0,
+      ehi1: 0,
+      ehi3: 0,
+      brn: r.diagnostics.brn,
+      hailInches: r.diagnostics.estimatedHailInches,
+    },
+  };
+}
+
+export function calculateOutlookForType(
+  stormType: string,
+  parameters: TornadoParameters
+): OutlookResult {
+  if (stormType === "supercell") {
+    return supercellToOutlookResult(calculateSupercellOutlook(parameters));
+  }
+  if (stormType === "hail") {
+    return hailToOutlookResult(calculateHailOutlook(parameters));
+  }
+  return calculateTornadoOutlook(parameters);
 }

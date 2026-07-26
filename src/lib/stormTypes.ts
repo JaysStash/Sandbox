@@ -21,7 +21,7 @@ export const STORM_TYPES: StormType[] = [
     name: "Supercells",
     description:
       "Build the parent thunderstorm structure — mesocyclone strength, hail potential, and wind threat.",
-    available: false,
+    available: true,
   },
   {
     slug: "haboob",
@@ -55,7 +55,7 @@ export const STORM_TYPES: StormType[] = [
     name: "Hail Storms",
     description:
       "Updraft strength and freezing-level height drive maximum hail size.",
-    available: false,
+    available: true,
   },
   {
     slug: "flash-flood",

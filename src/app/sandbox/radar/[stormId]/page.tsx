@@ -1,8 +1,9 @@
 import Link from "next/link";
 import { createClient } from "@/lib/supabase/server";
 import { REGION_COORDINATES, REGION_POPULATION_DENSITY } from "@/lib/regions";
-import { calculateTornadoOutlook, type TornadoParameters } from "@/lib/outlookEngine";
-import RadarViewer from "@/components/RadarViewer";
+import { calculateOutlookForType, type TornadoParameters } from "@/lib/outlookEngine";
+import { getStormType } from "@/lib/stormTypes";
+import RadarPageClient from "@/components/RadarPageClient";
 
 export default async function RadarPage({
   params,
@@ -36,23 +37,25 @@ export default async function RadarPage({
   }
 
   const parameters = storm.parameters as TornadoParameters;
-  const outlook = calculateTornadoOutlook(parameters);
+  const outlook = calculateOutlookForType(storm.storm_type, parameters);
   const regionCenter = REGION_COORDINATES[storm.region] ?? {
     lat: 39.8283,
     lng: -98.5795,
   };
   const populationDensity = REGION_POPULATION_DENSITY[storm.region] ?? 50;
+  const typeInfo = getStormType(storm.storm_type);
 
   return (
     <div>
-      <div className="px-4 pt-6">
+      <div className="px-4 pt-6 text-center">
         <h1 className="text-xl font-bold text-bolt-500">
-          {storm.storm_type === "tornado" ? "Tornado" : storm.storm_type} Radar
+          {typeInfo?.name ?? storm.storm_type} Radar
         </h1>
         <p className="text-sm text-gray-400">{storm.region}</p>
       </div>
       <div className="mt-4">
-        <RadarViewer
+        <RadarPageClient
+          stormType={storm.storm_type}
           region={storm.region}
           regionCenter={regionCenter}
           parameters={parameters}

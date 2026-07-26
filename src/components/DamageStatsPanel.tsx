@@ -11,7 +11,7 @@ export default function DamageStatsPanel({
   region: string;
   onClose: () => void;
 }) {
-  const noTornado = estimate.efRatingHigh === "N/A";
+  const noThreat = estimate.pathLengthMiles === 0;
 
   return (
     <div className="border-t border-storm-700 bg-storm-900 p-5">
@@ -25,16 +25,19 @@ export default function DamageStatsPanel({
         </button>
       </div>
       <p className="mt-1 text-xs text-gray-500">Region: {region}</p>
+      <p className="mt-3 font-semibold text-[#e8ecf5]">{estimate.headline}</p>
 
-      {noTornado ? (
-        <p className="mt-4 text-gray-300">
-          This setup did not support an organized, tornado-producing
-          supercell — no tornado damage to report for this run.
-        </p>
-      ) : (
+      {!noThreat && (
         <div className="mt-4 grid grid-cols-2 gap-3">
-          <Stat label="EF Rating" value={`${estimate.efRatingLow}–${estimate.efRatingHigh}`} />
-          <Stat label="Peak Winds" value={`${estimate.peakWindMph} mph`} />
+          {estimate.efRatingHigh !== "N/A" && (
+            <Stat label="EF Rating" value={`${estimate.efRatingLow}–${estimate.efRatingHigh}`} />
+          )}
+          {estimate.hailInches > 0 && (
+            <Stat label="Max Hail" value={`${estimate.hailInches}"`} />
+          )}
+          {estimate.peakWindMph > 0 && (
+            <Stat label="Peak Winds" value={`${estimate.peakWindMph} mph`} />
+          )}
           <Stat label="Path Length" value={`${estimate.pathLengthMiles} mi`} />
           <Stat label="Path Width" value={`${estimate.pathWidthMiles} mi`} />
           <Stat label="Duration" value={`${estimate.durationMinutes} min`} />
@@ -52,8 +55,8 @@ export default function DamageStatsPanel({
 
       <p className="mt-5 text-xs leading-relaxed text-gray-500">
         These are first-pass estimates from a regional population-density
-        average and standard EF-scale wind ranges — not real building-level or
-        census data yet. Deeper terrain/population modeling is a planned
+        average and standard physical relationships — not real building-level
+        or census data yet. Deeper terrain/population modeling is a planned
         future upgrade.
       </p>
     </div>
