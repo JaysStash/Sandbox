@@ -5,10 +5,7 @@ import Link from "next/link";
 import ParameterSlider from "@/components/ParameterSlider";
 import OutlookBox from "@/components/OutlookBox";
 import BadgeEarnedNotice from "@/components/BadgeEarnedNotice";
-import {
-  calculateOutlookForType,
-  type TornadoParameters,
-} from "@/lib/outlookEngine";
+import { calculateOutlookForType } from "@/lib/outlookEngine";
 import { saveStorm } from "@/app/sandbox/create/actions";
 
 type ParamDef = {
@@ -64,7 +61,7 @@ export default function SandboxCreator({
   } | null>(null);
 
   const outlook = useMemo(() => {
-    return calculateOutlookForType(stormType, values as unknown as TornadoParameters);
+    return calculateOutlookForType(stormType, values);
   }, [stormType, values]);
 
   const grouped = useMemo(() => {

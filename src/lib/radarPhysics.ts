@@ -1,5 +1,9 @@
 import { ValueNoise2D, clamp } from "@/lib/noise";
-import type { OutlookResult, TornadoParameters } from "@/lib/outlookEngine";
+import type {
+  OutlookResult,
+  TornadoParameters,
+  DerechoParameters,
+} from "@/lib/outlookEngine";
 
 const DEG2RAD = Math.PI / 180;
 const EARTH_RADIUS_KM = 6371;
@@ -420,6 +424,185 @@ export function buildStormState(
     vortexCoreRadiusM,
     echoTopKm,
     lfcKm,
+    lifecycleIntensity: frameIntensity,
+    time: timeCounter,
+  };
+}
+
+// ============================================================
+// Derecho / linear-system extension
+// A derecho is a moving BOWING LINE, not a rotating cell - this section
+// reuses the same noise, Z-R, beam-height, and attenuation machinery above,
+// but replaces the point-based storm shape with a line-based one.
+// ============================================================
+
+export type LinearStormState = {
+  centerXKm: number;
+  centerYKm: number;
+  motionBearingDeg: number;
+  systemLengthKm: number;
+  bowStrength: number; // 0-1
+  coreIntensity: number;
+  precipShieldBreadth: number;
+  translationSpeedMs: number;
+  lifecycleIntensity: number;
+  time: number;
+};
+
+function distanceToLine(
+  relXKm: number,
+  relYKm: number,
+  state: LinearStormState
+): number {
+  const bearingRad = state.motionBearingDeg * DEG2RAD;
+  const cosA = Math.cos(bearingRad);
+  const sinA = Math.sin(bearingRad);
+  // Rotate into storm-aligned frame: rx = forward (direction of motion),
+  // ry = position along the line, perpendicular to motion.
+  const rx = relXKm * sinA + relYKm * cosA;
+  const ry = relXKm * cosA - relYKm * sinA;
+
+  const halfLength = state.systemLengthKm / 2;
+  const normalizedPos = clamp(Math.abs(ry) / halfLength, 0, 1);
+  // Bow shape: strongest bulge at the center, tapering toward the ends -
+  // matches a real bow echo's structure.
+  const bowOffsetKm = state.bowStrength * 10 * (1 - normalizedPos * normalizedPos);
+
+  const alongLineOverhang = Math.max(0, Math.abs(ry) - halfLength);
+  const forwardDist = rx - bowOffsetKm;
+  return Math.sqrt(forwardDist * forwardDist + alongLineOverhang * alongLineOverhang);
+}
+
+export function computeLinearRainRate(
+  relXKm: number,
+  relYKm: number,
+  state: LinearStormState,
+  noise: ValueNoise2D
+): number {
+  const distToLine = distanceToLine(relXKm, relYKm, state);
+  const lifecycleScale = 0.4 + 0.6 * state.lifecycleIntensity;
+  const lineWidthKm = 7 * lifecycleScale * (0.8 + 0.4 * state.precipShieldBreadth);
+
+  const noiseVal = noise.fbm(
+    relXKm * 0.05 + state.time * 0.12,
+    relYKm * 0.05,
+    3
+  );
+  const edgeNoise = (noiseVal - 0.5) * lineWidthKm * 0.6;
+  const effectiveWidth = lineWidthKm + edgeNoise;
+
+  let intensity = 0;
+  if (distToLine < effectiveWidth) {
+    const falloff = clamp(1 - distToLine / (effectiveWidth + 0.0001), 0, 1);
+    intensity = falloff * (0.5 + 0.5 * state.coreIntensity);
+    intensity *= 0.6 + 0.4 * noiseVal;
+  }
+
+  return clamp(intensity, 0, 1) * 180;
+}
+
+// A derecho's velocity signature is a strong, largely uniform outbound flow
+// along the leading edge (the gust front racing away from the parent
+// system), not a rotational couplet - genuinely different from Tornado/
+// Supercell/Hail, and rendered differently on purpose.
+export function computeLinearRadialVelocity(
+  relXKm: number,
+  relYKm: number,
+  azimuthRad: number,
+  state: LinearStormState
+): number {
+  const distToLine = distanceToLine(relXKm, relYKm, state);
+  const lineWidthKm = 9 * (0.4 + 0.6 * state.lifecycleIntensity);
+  if (distToLine > lineWidthKm * 1.4) return 0;
+
+  const bearingRad = state.motionBearingDeg * DEG2RAD;
+  const outflowSpeedMs =
+    (state.translationSpeedMs + 15 * state.lifecycleIntensity) *
+    clamp(1 - distToLine / (lineWidthKm * 1.4), 0, 1);
+
+  const flowX = outflowSpeedMs * Math.sin(bearingRad);
+  const flowY = outflowSpeedMs * Math.cos(bearingRad);
+
+  const radialUnitX = Math.sin(azimuthRad);
+  const radialUnitY = Math.cos(azimuthRad);
+  return flowX * radialUnitX + flowY * radialUnitY;
+}
+
+export function computeLinearCell(
+  relXKm: number,
+  relYKm: number,
+  azimuthRad: number,
+  beamHeightKmVal: number,
+  state: LinearStormState,
+  radarParams: RadarParams,
+  noise: ValueNoise2D
+): { dBZ: number; radialVelocityMs: number; isFolded: boolean } {
+  let rainRate = computeLinearRainRate(relXKm, relYKm, state, noise);
+  if (beamHeightKmVal > 9) rainRate = 0; // derecho-producing lines are low-topped relative to supercells
+
+  const dBZ = rainRate < 0.05 ? -30 : rainRateToDbz(rainRate);
+  const rawRadialVel = computeLinearRadialVelocity(relXKm, relYKm, azimuthRad, state);
+  const { value: foldedVel, folded } = foldVelocity(rawRadialVel, radarParams.nyquistMs);
+
+  return { dBZ, radialVelocityMs: foldedVel, isFolded: folded };
+}
+
+export function computeLinearRadial(
+  azimuthRad: number,
+  rangeBinsKm: number[],
+  state: LinearStormState,
+  radarParams: RadarParams,
+  noise: ValueNoise2D
+): { dBZ: number[]; velocityMs: number[]; folded: boolean[] } {
+  const dBZArr: number[] = [];
+  const velArr: number[] = [];
+  const foldedArr: boolean[] = [];
+  let cumulativeAttenuation = 0;
+
+  for (const rangeKm of rangeBinsKm) {
+    const cellXKm = rangeKm * Math.sin(azimuthRad);
+    const cellYKm = rangeKm * Math.cos(azimuthRad);
+    const relXKm = cellXKm - state.centerXKm;
+    const relYKm = cellYKm - state.centerYKm;
+
+    const beamH = beamHeightKm(rangeKm, radarParams.tiltDeg);
+    const result = computeLinearCell(relXKm, relYKm, azimuthRad, beamH, state, radarParams, noise);
+
+    let dBZ = result.dBZ - cumulativeAttenuation;
+    if (dBZ > 50) cumulativeAttenuation += (dBZ - 50) * 0.08;
+
+    dBZArr.push(dBZ);
+    velArr.push(result.radialVelocityMs);
+    foldedArr.push(result.isFolded);
+  }
+
+  return { dBZ: dBZArr, velocityMs: velArr, folded: foldedArr };
+}
+
+export function buildLinearStormState(
+  parameters: DerechoParameters,
+  outlook: OutlookResult,
+  frameLat: number,
+  frameLng: number,
+  frameIntensity: number,
+  frameBearingDeg: number,
+  radarSite: { lat: number; lng: number },
+  timeCounter: number
+): LinearStormState {
+  const kmPerDegLat = 111.32;
+  const kmPerDegLng = 111.32 * Math.cos(radarSite.lat * DEG2RAD);
+  const centerXKm = (frameLng - radarSite.lng) * kmPerDegLng;
+  const centerYKm = (frameLat - radarSite.lat) * kmPerDegLat;
+
+  return {
+    centerXKm,
+    centerYKm,
+    motionBearingDeg: frameBearingDeg,
+    systemLengthKm: clamp(parameters.system_length_km, 50, 500),
+    bowStrength: clamp(outlook.diagnostics.derechoIndex ?? 0.5, 0.2, 1),
+    coreIntensity: clamp(parameters.mucape / 4000, 0.3, 1),
+    precipShieldBreadth: clamp(parameters.pwat / 2.2, 0.3, 1),
+    translationSpeedMs: parameters.storm_motion_speed * 0.5144,
     lifecycleIntensity: frameIntensity,
     time: timeCounter,
   };

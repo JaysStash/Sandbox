@@ -42,7 +42,7 @@ export const STORM_TYPES: StormType[] = [
     name: "Derechoes",
     description:
       "Long-lived bow echoes and widespread wind damage from a fast-moving MCS.",
-    available: false,
+    available: true,
   },
   {
     slug: "lightning",

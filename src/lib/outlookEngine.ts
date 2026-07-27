@@ -56,6 +56,8 @@ export type OutlookResult = {
     brn: number;
     hailInches?: number;
     gustMph?: number;
+    swathMiles?: number;
+    derechoIndex?: number;
   };
 };
 
@@ -453,15 +455,186 @@ export function hailToOutlookResult(r: HailOutlookResult): OutlookResult {
   };
 }
 
+export function derechoToOutlookResult(r: DerechoOutlookResult): OutlookResult {
+  return {
+    category: r.category,
+    categoryLabel: r.categoryLabel,
+    categoryColor: r.categoryColor,
+    headline: r.headline,
+    explanation: r.explanation,
+    supercellLikely: r.organizedModeLikely,
+    diagnostics: {
+      stp: 0,
+      scp: 0,
+      ehi1: 0,
+      ehi3: 0,
+      brn: 0,
+      gustMph: r.diagnostics.estimatedPeakGustMph,
+      swathMiles: r.diagnostics.estimatedSwathLengthMiles,
+      derechoIndex: r.diagnostics.derechoIndex,
+    },
+  };
+}
+
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
 export function calculateOutlookForType(
   stormType: string,
-  parameters: TornadoParameters
+  parameters: any
 ): OutlookResult {
   if (stormType === "supercell") {
-    return supercellToOutlookResult(calculateSupercellOutlook(parameters));
+    return supercellToOutlookResult(calculateSupercellOutlook(parameters as TornadoParameters));
   }
   if (stormType === "hail") {
-    return hailToOutlookResult(calculateHailOutlook(parameters));
+    return hailToOutlookResult(calculateHailOutlook(parameters as TornadoParameters));
   }
-  return calculateTornadoOutlook(parameters);
+  if (stormType === "derecho") {
+    return derechoToOutlookResult(calculateDerechoOutlook(parameters as DerechoParameters));
+  }
+  return calculateTornadoOutlook(parameters as TornadoParameters);
+}
+
+// ============================================================
+// Derecho Outlook Engine
+// A genuinely distinct parameter set from Tornado/Supercell/Hail - a
+// derecho's damaging wind comes from a fast-moving bowing line driven by
+// downdraft/cold-pool dynamics and a rear-inflow jet, not from rotation.
+// ============================================================
+
+export type DerechoParameters = {
+  mucape: number;
+  dcape: number;
+  cape_0_3km: number;
+  pwat: number;
+  shear_0_6km: number;
+  mean_wind_0_6km: number;
+  rear_inflow_jet_ms: number;
+  line_perpendicular_shear: number;
+  surface_wind_speed: number;
+  lapse_rate_0_3km: number;
+  lapse_rate_700_500mb: number;
+  td_depression_700mb: number;
+  freezing_level_height: number;
+  cold_pool_strength: number;
+  initial_organization: number;
+  boundary_strength: number;
+  storm_motion_speed: number;
+  system_length_km: number;
+};
+
+export type DerechoOutlookResult = {
+  category: RiskCategory;
+  categoryLabel: string;
+  categoryColor: string;
+  headline: string;
+  explanation: string;
+  organizedModeLikely: boolean;
+  meetsOfficialDerechoLength: boolean;
+  diagnostics: {
+    derechoIndex: number;
+    estimatedPeakGustMph: number;
+    estimatedSwathLengthMiles: number;
+  };
+};
+
+export function calculateDerechoOutlook(
+  p: DerechoParameters
+): DerechoOutlookResult {
+  const downdraftTerm = clamp(p.dcape / 1200, 0, 1.3);
+  const jetTerm = clamp(p.rear_inflow_jet_ms / 30, 0, 1.2);
+  const shearTerm = clamp(p.line_perpendicular_shear / 50, 0, 1.2);
+  const coldPoolTerm = clamp(p.cold_pool_strength / 10, 0, 1);
+  const orgTerm = clamp(0.3 + (p.initial_organization / 10) * 0.7, 0.3, 1);
+  const dryTerm = clamp(p.td_depression_700mb / 25, 0.3, 1);
+
+  const derechoIndex =
+    (downdraftTerm * 0.32 +
+      jetTerm * 0.25 +
+      shearTerm * 0.18 +
+      coldPoolTerm * 0.15 +
+      dryTerm * 0.1) *
+    orgTerm;
+
+  const organizedModeLikely = p.shear_0_6km >= 25 && p.initial_organization >= 3;
+
+  const estimatedPeakGustMph = organizedModeLikely
+    ? 35 + p.surface_wind_speed * 0.5 + clamp(derechoIndex, 0, 1.5) * 70
+    : 20 + p.surface_wind_speed * 0.3;
+
+  const estimatedSwathLengthMiles = organizedModeLikely
+    ? p.system_length_km * 0.621 * clamp(0.6 + (p.storm_motion_speed / 45) * 0.8, 0.5, 2)
+    : 0;
+
+  const meetsOfficialDerechoLength =
+    estimatedSwathLengthMiles >= 400 && estimatedPeakGustMph >= 58;
+
+  let category: RiskCategory;
+  if (!organizedModeLikely) {
+    category = estimatedPeakGustMph > 40 ? "MRGL" : "TSTM";
+  } else if (estimatedPeakGustMph >= 100) {
+    category = "HIGH";
+  } else if (estimatedPeakGustMph >= 90) {
+    category = "MDT";
+  } else if (estimatedPeakGustMph >= 75) {
+    category = "ENH";
+  } else if (estimatedPeakGustMph >= 58) {
+    category = "SLGT";
+  } else if (estimatedPeakGustMph >= 40) {
+    category = "MRGL";
+  } else {
+    category = "TSTM";
+  }
+
+  const meta = CATEGORY_META[category];
+  const notes: string[] = [];
+
+  if (!organizedModeLikely) {
+    notes.push(
+      "shear and initial organization are too weak to sustain a coherent bowing line — expect scattered, shorter-lived storms instead"
+    );
+  } else {
+    if (p.rear_inflow_jet_ms >= 20) {
+      notes.push(
+        "a strong rear-inflow jet is driving damaging winds down to the surface behind the leading edge"
+      );
+    }
+    if (p.dcape >= 1200) {
+      notes.push("very strong downdraft potential supports intense, widespread wind gusts");
+    }
+    if (p.cold_pool_strength >= 7) {
+      notes.push(
+        "a strong cold pool is continuously triggering new development, helping the system self-sustain over a long distance"
+      );
+    }
+    if (meetsOfficialDerechoLength) {
+      notes.push(
+        "the projected wind swath is long enough to meet official NWS derecho length criteria (400+ miles)"
+      );
+    } else {
+      notes.push(
+        "this is a strong, potentially damaging wind event, but the projected swath falls short of official derecho length criteria"
+      );
+    }
+  }
+
+  const explanation =
+    notes.length > 0
+      ? `This setup shows ${notes.join("; ")}.`
+      : "Parameters are relatively balanced with no single dominant factor.";
+
+  const headline = organizedModeLikely
+    ? `${meta.label}: widespread gusts near ${Math.round(
+        estimatedPeakGustMph
+      )} mph across roughly ${Math.round(estimatedSwathLengthMiles)} miles`
+    : `${meta.label}: a sustained, organized derecho-producing line is not well supported by this combination`;
+
+  return {
+    category,
+    categoryLabel: meta.label,
+    categoryColor: meta.color,
+    headline,
+    explanation,
+    organizedModeLikely,
+    meetsOfficialDerechoLength,
+    diagnostics: { derechoIndex, estimatedPeakGustMph, estimatedSwathLengthMiles },
+  };
 }

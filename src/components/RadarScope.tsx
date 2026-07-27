@@ -5,16 +5,27 @@ import { ValueNoise2D } from "@/lib/noise";
 import {
   buildStormState,
   computeRadial,
+  buildLinearStormState,
+  computeLinearRadial,
   type RadarParams,
 } from "@/lib/radarPhysics";
 import { reflectivityColor, velocityColor } from "@/lib/nexradColors";
-import { generateStormTrack, type StormFrame } from "@/lib/stormTrack";
+import {
+  generateStormTrack,
+  generateDerechoTrack,
+  type StormFrame,
+} from "@/lib/stormTrack";
 import { destinationPoint } from "@/lib/regions";
-import type { OutlookResult, TornadoParameters } from "@/lib/outlookEngine";
+import type {
+  OutlookResult,
+  TornadoParameters,
+  DerechoParameters,
+} from "@/lib/outlookEngine";
 
 type Props = {
+  stormType: string;
   regionCenter: { lat: number; lng: number };
-  parameters: TornadoParameters;
+  parameters: Record<string, number>;
   outlook: OutlookResult;
 };
 
@@ -24,7 +35,7 @@ const DISPLAY_RANGE_KM = 65;
 const CANVAS_SIZE = 320;
 const NO_DATA = -9999;
 
-export default function RadarScope({ regionCenter, parameters, outlook }: Props) {
+export default function RadarScope({ stormType, regionCenter, parameters, outlook }: Props) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const noiseRef = useRef<ValueNoise2D>(new ValueNoise2D(777));
   const framesRef = useRef<StormFrame[]>([]);
@@ -64,7 +75,18 @@ export default function RadarScope({ regionCenter, parameters, outlook }: Props)
       distanceOffsetKm
     );
     setRadarSite(site);
-    framesRef.current = generateStormTrack(regionCenter, parameters, outlook);
+    framesRef.current =
+      stormType === "derecho"
+        ? generateDerechoTrack(
+            regionCenter,
+            parameters as unknown as DerechoParameters,
+            outlook
+          )
+        : generateStormTrack(
+            regionCenter,
+            parameters as unknown as TornadoParameters,
+            outlook
+          );
     dBZBufferRef.current.fill(NO_DATA);
     velBufferRef.current.fill(NO_DATA);
     foldedBufferRef.current.fill(0);
@@ -72,7 +94,7 @@ export default function RadarScope({ regionCenter, parameters, outlook }: Props)
     stormFrameIndexRef.current = 0;
     rotationsCompletedRef.current = 0;
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [distanceOffsetKm, regionCenter, parameters, outlook]);
+  }, [distanceOffsetKm, regionCenter, parameters, outlook, stormType]);
 
   // Reset the sweep (not the whole track) whenever tilt changes, since a
   // real radar needs a fresh scan to show a different elevation angle.
@@ -94,16 +116,33 @@ export default function RadarScope({ regionCenter, parameters, outlook }: Props)
       if (frames.length === 0) return;
 
       const frame = frames[stormFrameIndexRef.current];
-      const state = buildStormState(
-        parameters,
-        outlook,
-        frame.lat,
-        frame.lng,
-        frame.intensity,
-        frame.bearingDeg,
-        radarSite,
-        timeCounterRef.current
-      );
+      const isDerecho = stormType === "derecho";
+
+      const pointState = !isDerecho
+        ? buildStormState(
+            parameters as unknown as TornadoParameters,
+            outlook,
+            frame.lat,
+            frame.lng,
+            frame.intensity,
+            frame.bearingDeg,
+            radarSite,
+            timeCounterRef.current
+          )
+        : null;
+
+      const linearState = isDerecho
+        ? buildLinearStormState(
+            parameters as unknown as DerechoParameters,
+            outlook,
+            frame.lat,
+            frame.lng,
+            frame.intensity,
+            frame.bearingDeg,
+            radarSite,
+            timeCounterRef.current
+          )
+        : null;
 
       for (let i = 0; i < raysPerTick; i++) {
         const azIndex = sweepAzIndexRef.current;
@@ -114,13 +153,22 @@ export default function RadarScope({ regionCenter, parameters, outlook }: Props)
           rangeBinsKm.push(((r + 0.5) / RANGE_BINS) * DISPLAY_RANGE_KM);
         }
 
-        const result = computeRadial(
-          azimuthRad,
-          rangeBinsKm,
-          state,
-          radarParams,
-          noiseRef.current
-        );
+        const result =
+          isDerecho && linearState
+            ? computeLinearRadial(
+                azimuthRad,
+                rangeBinsKm,
+                linearState,
+                radarParams,
+                noiseRef.current
+              )
+            : computeRadial(
+                azimuthRad,
+                rangeBinsKm,
+                pointState!,
+                radarParams,
+                noiseRef.current
+              );
 
         for (let r = 0; r < RANGE_BINS; r++) {
           const idx = azIndex * RANGE_BINS + r;
@@ -145,7 +193,7 @@ export default function RadarScope({ regionCenter, parameters, outlook }: Props)
 
     return () => clearInterval(interval);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [playing, tiltDeg, speedMultiplier, radarSite, parameters, outlook, product]);
+  }, [playing, tiltDeg, speedMultiplier, radarSite, parameters, outlook, product, stormType]);
 
   function draw() {
     const canvas = canvasRef.current;

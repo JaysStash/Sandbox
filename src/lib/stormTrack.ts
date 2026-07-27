@@ -1,5 +1,10 @@
 import { destinationPoint } from "@/lib/regions";
-import type { OutlookResult, TornadoParameters } from "@/lib/outlookEngine";
+import { clamp } from "@/lib/noise";
+import type {
+  OutlookResult,
+  TornadoParameters,
+  DerechoParameters,
+} from "@/lib/outlookEngine";
 
 export type StormFrame = {
   lat: number;
@@ -56,6 +61,52 @@ export function generateStormTrack(
       intensity,
       bearingDeg: bearing,
       showMesocyclone: showRotationSignature && intensity > 0.55,
+    });
+  }
+
+  return frames;
+}
+
+// ============================================================
+// Derecho track - a much longer-distance system than a discrete cell,
+// reusing the same lifecycle curve but scaled to a derecho's real
+// hundreds-of-miles travel distance.
+// ============================================================
+
+export function generateDerechoTrack(
+  center: { lat: number; lng: number },
+  parameters: DerechoParameters,
+  outlook: OutlookResult
+): StormFrame[] {
+  // Line-perpendicular shear nudges the overall bearing slightly, similar
+  // to how storm motion deviation works for rotating storms.
+  const baseBearing = 65; // derechoes classically move WSW to ENE
+  const bearing = baseBearing + clamp((parameters.line_perpendicular_shear - 25) / 60, -1, 1) * 8;
+
+  const totalDistanceKm = outlook.supercellLikely
+    ? Math.min(700, Math.max(80, (outlook.diagnostics.swathMiles ?? 100) * 1.60934))
+    : 80;
+
+  const start = destinationPoint(
+    center.lat,
+    center.lng,
+    (bearing + 180) % 360,
+    totalDistanceKm / 2
+  );
+
+  const frames: StormFrame[] = [];
+  for (let i = 0; i < FRAME_COUNT; i++) {
+    const t = i / (FRAME_COUNT - 1);
+    const distanceSoFar = t * totalDistanceKm;
+    const pos = destinationPoint(start.lat, start.lng, bearing, distanceSoFar);
+    const intensity = lifecycleIntensity(t);
+
+    frames.push({
+      lat: pos.lat,
+      lng: pos.lng,
+      intensity,
+      bearingDeg: bearing,
+      showMesocyclone: false,
     });
   }
 

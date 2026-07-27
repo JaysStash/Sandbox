@@ -4,7 +4,7 @@ import { useState } from "react";
 import RadarScope from "@/components/RadarScope";
 import DamageStatsPanel from "@/components/DamageStatsPanel";
 import { calculateDamageEstimate } from "@/lib/damageEstimator";
-import type { OutlookResult, TornadoParameters } from "@/lib/outlookEngine";
+import type { OutlookResult } from "@/lib/outlookEngine";
 
 export default function RadarPageClient({
   stormType,
@@ -17,7 +17,7 @@ export default function RadarPageClient({
   stormType: string;
   region: string;
   regionCenter: { lat: number; lng: number };
-  parameters: TornadoParameters;
+  parameters: Record<string, number>;
   outlook: OutlookResult;
   populationDensity: number;
 }) {
@@ -33,6 +33,7 @@ export default function RadarPageClient({
   return (
     <div className="mx-auto max-w-md px-4 pb-12">
       <RadarScope
+        stormType={stormType}
         regionCenter={regionCenter}
         parameters={parameters}
         outlook={outlook}

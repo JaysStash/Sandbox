@@ -1,4 +1,4 @@
-import type { OutlookResult, TornadoParameters } from "@/lib/outlookEngine";
+import type { OutlookResult, TornadoParameters, DerechoParameters } from "@/lib/outlookEngine";
 
 export type DamageEstimate = {
   headline: string;
@@ -148,17 +148,53 @@ function hailDamage(
   };
 }
 
+function derechoDamage(
+  parameters: DerechoParameters,
+  outlook: OutlookResult,
+  populationDensityPerSqKm: number
+): DamageEstimate {
+  if (!outlook.supercellLikely) {
+    return emptyEstimate("No organized derecho-producing line from this setup.");
+  }
+
+  const gustMph = outlook.diagnostics.gustMph ?? 0;
+  const pathLengthMiles = clamp(parameters.system_length_km * 0.621 * 2, 50, 900);
+  const pathWidthMiles = clamp(parameters.system_length_km / 15, 10, 60);
+  const durationMinutes = Math.round(pathLengthMiles / Math.max(15, parameters.storm_motion_speed) * 60);
+  const pathAreaSqKm = pathLengthMiles * 1.60934 * (pathWidthMiles * 1.60934);
+  const estimatedPopulationExposed = Math.round(pathAreaSqKm * populationDensityPerSqKm * 0.35);
+  const costPerPerson = 150 + Math.max(0, gustMph - 58) * 25;
+  const estimatedDamageUSD = Math.round(estimatedPopulationExposed * costPerPerson);
+
+  return {
+    headline: `Widespread ${Math.round(gustMph)} mph gusts across a ${Math.round(pathLengthMiles)}-mile swath`,
+    efRatingLow: "N/A",
+    efRatingHigh: "N/A",
+    peakWindMph: Math.round(gustMph),
+    hailInches: 0,
+    pathLengthMiles: Math.round(pathLengthMiles),
+    pathWidthMiles: Math.round(pathWidthMiles),
+    durationMinutes,
+    estimatedPopulationExposed,
+    estimatedDamageUSD,
+  };
+}
+
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
 export function calculateDamageEstimate(
   stormType: string,
-  parameters: TornadoParameters,
+  parameters: any,
   outlook: OutlookResult,
   populationDensityPerSqKm: number
 ): DamageEstimate {
   if (stormType === "supercell") {
-    return supercellDamage(parameters, outlook, populationDensityPerSqKm);
+    return supercellDamage(parameters as TornadoParameters, outlook, populationDensityPerSqKm);
   }
   if (stormType === "hail") {
-    return hailDamage(parameters, outlook, populationDensityPerSqKm);
+    return hailDamage(parameters as TornadoParameters, outlook, populationDensityPerSqKm);
   }
-  return tornadoDamage(parameters, outlook, populationDensityPerSqKm);
+  if (stormType === "derecho") {
+    return derechoDamage(parameters as DerechoParameters, outlook, populationDensityPerSqKm);
+  }
+  return tornadoDamage(parameters as TornadoParameters, outlook, populationDensityPerSqKm);
 }

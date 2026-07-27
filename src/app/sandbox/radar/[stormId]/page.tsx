@@ -1,7 +1,7 @@
 import Link from "next/link";
 import { createClient } from "@/lib/supabase/server";
 import { REGION_COORDINATES, REGION_POPULATION_DENSITY } from "@/lib/regions";
-import { calculateOutlookForType, type TornadoParameters } from "@/lib/outlookEngine";
+import { calculateOutlookForType } from "@/lib/outlookEngine";
 import { getStormType } from "@/lib/stormTypes";
 import RadarPageClient from "@/components/RadarPageClient";
 
@@ -36,7 +36,7 @@ export default async function RadarPage({
     );
   }
 
-  const parameters = storm.parameters as TornadoParameters;
+  const parameters = storm.parameters as Record<string, number>;
   const outlook = calculateOutlookForType(storm.storm_type, parameters);
   const regionCenter = REGION_COORDINATES[storm.region] ?? {
     lat: 39.8283,
